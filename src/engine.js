@@ -11,14 +11,15 @@
 const N = 2048, NM = N - 1, NSH = 11;        // world size (wraps)
 const NC = 1024, NCM = NC - 1, NCSH = 10;    // cloud map size (wraps)
 const CK = 12, CLOUD_ALT = 78, ZTOP = CLOUD_ALT + CK;
-const JET_SC = 0.55;                          // world units per jet voxel
+const JET_SC = 0.55 / 3;                      // world units per jet voxel (a jet is ~18 units long)
+const JS = JET_SC / 0.55;                      // size of things scaled to the jet, against the original tuning
 const VIEW_DIST = 1700, FOG_START = 340, FOG_STEPS = 12, NSKY = 10, EPS = 1e-5;
 const COCKPIT_LOOK = 64, COCKPIT_EYE = 5;
 const TRAIL_N = 96;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const P = {
   speed: 96, boost: 1.9, agility: 1.3, bank: 56, altitude: 112, ceiling: 280, clearance: 7,
-  cameraFollow: 0.6, chaseDistance: 2.5, chaseAngle: 19, chaseSize: 0.23, transition: 1.2,
+  cameraFollow: 0.6, chaseDistance: 2.5 / JS, chaseAngle: 19, chaseSize: 0.23 * JS, transition: 1.2,
   clouds: 0.4, land: 0.33, seed: 7, afterburner: 0.9,
 };
 
@@ -525,8 +526,10 @@ function createGame() {
 
   // ── effects
   // kind: 0 dark smoke · 1 white vapour · 2 fire (ages through the fire palette into smoke)
+  let puffK = 1;   // explode() shrinks its puffs with this
   function puff(kind, x, y, z, vx, vy, vz, size, grow, life, strength, delay = 0) {
     if (puffs.length > 420) puffs.shift();
+    vx *= puffK; vy *= puffK; vz *= puffK; size *= puffK; grow *= puffK;
     puffs.push({ kind, x, y, z, vx, vy, vz, size, grow, life, born: time + delay, strength, seed: (Math.random() * 16) | 0 });
   }
   function spark(x, y, z, vx, vy, vz, life, col, g) {
@@ -534,6 +537,7 @@ function createGame() {
     sparks.push({ x, y, z, vx, vy, vz, life, born: time, col, g });
   }
   function explode(x, y, z, big) {
+    puffK = 0.6;
     const rnd = Math.random;
     if (big) {
       // a white flash, a knot of fireballs, more thrown outwards a beat later, then dark smoke rolling up
@@ -550,6 +554,7 @@ function createGame() {
       spark(x, y, z, Math.cos(a) * sp, Math.sin(a) * sp, e * sp * 0.6, 0.4 + Math.random() * 0.9, i & 1 ? firePal[1] : firePal[3], 90);
     }
     if (big) cb.shake = Math.max(cb.shake, clamp(1 - Math.hypot(x - lead.x, y - lead.y) / 400, 0, 1) * 0.5);
+    puffK = 1;
   }
   function splash(x, y, big) {
     for (let i = 0; i < (big ? 40 : 3); i++) {
@@ -560,7 +565,7 @@ function createGame() {
   }
 
   // ── combat
-  const BUL_SPD = 600, BUL_LIFE = 0.85, HIT_R = 14, HIT_DZ = 15, LOCK_RANGE = 560, LOCK_CONE = 0.42, LOCK_TIME = 0.8;
+  const BUL_SPD = 600, BUL_LIFE = 0.85, HIT_R = 7, HIT_DZ = 9, LOCK_RANGE = 560, LOCK_CONE = 0.42, LOCK_TIME = 0.8;
   function spawnEnemy() {
     const a = Math.random() * 6.283, r = 520 + Math.random() * 220;
     const e = makeJet(models.enemy, lead.x + Math.cos(a) * r, lead.y + Math.sin(a) * r, clamp(lead.z + (Math.random() - 0.5) * 60, 30, 220), Math.random() * 6.283);
@@ -657,7 +662,7 @@ function createGame() {
       if (e.burst > 0 && (e.bT -= dt) < 0) {
         e.burst--; e.bT = 0.09;
         const s = BUL_SPD * 0.68;
-        bullets.push({ x: e.x + fx * 30, y: e.y + fy * 30, z: e.z, vx: fx * s + e.vx, vy: fy * s + e.vy, vz: (lead.z - e.z) / Math.max(0.1, dist / s), life: BUL_LIFE, own: false });
+        bullets.push({ x: e.x + fx * 30 * JS, y: e.y + fy * 30 * JS, z: e.z, vx: fx * s + e.vx, vy: fy * s + e.vy, vz: (lead.z - e.z) / Math.max(0.1, dist / s), life: BUL_LIFE, own: false });
       }
     }
     // rounds: a swept hit test so fast rounds do not tunnel through
@@ -686,11 +691,11 @@ function createGame() {
         const dx = t.x - m.x, dy = t.y - m.y;
         m.yaw = wrapAngle(m.yaw + clamp(wrapAngle(Math.atan2(dx, -dy) - m.yaw) * 6, -3.2, 3.2) * dt);
         m.z += clamp(t.z - m.z, -80 * dt, 80 * dt);
-        if (Math.hypot(dx, dy, t.z - m.z) < 14) { t.hp = 0; killEnemy(t); m.life = 0; }
+        if (Math.hypot(dx, dy, t.z - m.z) < 9) { t.hp = 0; killEnemy(t); m.life = 0; }
       }
       const fx = Math.sin(m.yaw), fy = -Math.cos(m.yaw);
       m.x += fx * m.spd * dt; m.y += fy * m.spd * dt;
-      if ((m.smokeT -= dt) < 0) { m.smokeT = 0.022; puff(1, m.x - fx * 4, m.y - fy * 4, m.z, -fx * 20, -fy * 20, 1, 1.4, 2.6, 0.8, 0.85); }
+      if ((m.smokeT -= dt) < 0) { m.smokeT = 0.022; puff(1, m.x - fx * 2, m.y - fy * 2, m.z, -fx * 20, -fy * 20, 1, 0.9, 1.8, 0.8, 0.85); }
       if (m.life <= 0) { if (!t || !t.dying) explode(m.x, m.y, m.z, false); missiles.splice(i, 1); }
     }
     for (let i = puffs.length - 1; i >= 0; i--) {
@@ -787,12 +792,12 @@ function createGame() {
     if (introDone && boost > 0.3 && Math.random() < dt * 40) {
       const ax = axes(lead), m = lead.model, en = m.engines[(Math.random() * m.engines.length) | 0];
       modelPoint(lead, ax, en.a, m.nozzleK + 14, m.engineY, tmp3);
-      puff(0, tmp3[0], tmp3[1], tmp3[2], -lead.vx * 0.3, -lead.vy * 0.3, 2, 1.6, 6, 0.8, 0.45);
+      puff(0, tmp3[0], tmp3[1], tmp3[2], -lead.vx * 0.3, -lead.vy * 0.3, 2, 1.6 * JS, 6 * JS, 0.8, 0.45);
     }
     if (!cb.dead && lead.z < 20 && matAt(lead.x, lead.y) < NWATER) {
       for (let i = 0, n = Math.round((20 - lead.z) * 0.5 * (speed / P.speed)); i < n; i++) {
         const side = Math.random() * 2 - 1, rx = Math.cos(lead.yaw), ry = Math.sin(lead.yaw);
-        spark(lead.x + rx * side * 10 - lead.vx * 0.12, lead.y + ry * side * 10 - lead.vy * 0.12, 0.5, lead.vx * 0.2 + rx * side * 30, lead.vy * 0.2 + ry * side * 30, 14 + Math.random() * 30, 0.35 + Math.random() * 0.45, whitePal[i & 3], 80);
+        spark(lead.x + rx * side * 10 * JS - lead.vx * 0.12, lead.y + ry * side * 10 * JS - lead.vy * 0.12, 0.5, lead.vx * 0.2 + rx * side * 30, lead.vy * 0.2 + ry * side * 30, 14 + Math.random() * 30, 0.35 + Math.random() * 0.45, whitePal[i & 3], 80);
       }
     }
     updateCombat(dt);
@@ -1003,7 +1008,7 @@ function createGame() {
     F_hzR = hazeCol & 255; F_hzG = (hazeCol >> 8) & 255; F_hzB = (hazeCol >> 16) & 255;
     // jet shadows: each planform, pushed away from the jet by the sun as it climbs
     let nShadow = 0;
-    const reach = 96 * 0.75 * JET_SC + 3;
+    const reach = 96 * 0.75 * JET_SC + 2;
     shTile.fill(0);
     const addShadow = j => {
       if (nShadow >= 8 || Math.abs(j.x - cam.x) > 900 || Math.abs(j.y - cam.y) > 900) return;
@@ -1094,7 +1099,7 @@ function createGame() {
         if (has) {
           const span = Math.max(Math.abs(sxp - prevX), Math.abs(syp - prevY));
           if (span < 700) {
-            const steps = Math.max(1, Math.ceil(span)), alpha = age < 0.5 ? 1 : (1 - age) * 2, col = age < 0.25 ? trailPal[0] : age < 0.6 ? trailPal[1] : trailPal[2], thick = prM > 2 ? 3 : prM > 0.9 ? 2 : 1;
+            const steps = Math.max(1, Math.ceil(span)), alpha = age < 0.5 ? 1 : (1 - age) * 2, col = age < 0.25 ? trailPal[0] : age < 0.6 ? trailPal[1] : trailPal[2], thick = prM * JS > 1.3 ? 2 : 1;
             for (let k = 0; k < steps; k++) {
               const x0 = Math.round(prevX + ((sxp - prevX) * k) / steps), y0 = Math.round(prevY + ((syp - prevY) * k) / steps);
               for (let yy = y0; yy < y0 + thick; yy++) for (let xx = x0; xx < x0 + thick; xx++) {
@@ -1169,8 +1174,8 @@ function createGame() {
     const body = pack(236, 238, 244), tip = pack(232, 60, 50);
     for (const m of missiles) {
       const fx = Math.sin(m.yaw), fy = -Math.cos(m.yaw);
-      line3(m.x - fx * 7, m.y - fy * 7, m.z, m.x + fx * 4, m.y + fy * 4, m.z, body, tip);
-      if (project(m.x - fx * 8, m.y - fy * 8, m.z)) {
+      line3(m.x - fx * 3.5, m.y - fy * 3.5, m.z, m.x + fx * 2, m.y + fy * 2, m.z, body, tip);
+      if (project(m.x - fx * 4, m.y - fy * 4, m.z)) {
         const x = prX | 0, y = prY | 0;
         for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (xx >= colLo && yy >= rowLo && xx < colHi && yy < rowHi && zbuf[yy * W + xx] >= prV - 2) fb[yy * W + xx] = flamePal[xx === x && yy === y ? 0 : 2];
       }
