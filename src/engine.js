@@ -408,6 +408,7 @@ function createGame() {
   let PX = 1;   // how thick a 1-pixel line is at this resolution (1 at 360 rows, 3 at 1080)
   let pivotY = 0, cockpit = null, colLo = 0, colHi = 0, rowLo = 0, rowHi = 0, frameH = 0;
   let time = 0, holding = false, pointerOn = false, pointerX = 0, pointerY = 0, boostKey = false, keyTurn = 0, keyClimb = 0, keyMode = false;
+  const stick = { on: false, x: 0, y: 0 };
   let altGoal = P.altitude, climbV = 0, climbTilt = 0, floorS = 0, speedNow = P.speed, boost = 0;
   const cam = { x: 0, y: 0, yaw: 0, alt: P.altitude }, follow = { x: 0, y: 0, alt: P.altitude };
   let viewTarget = 0;
@@ -573,12 +574,31 @@ function createGame() {
     Object.assign(e, { hp: 8, gunT: 1 + Math.random() * 2, burst: 0, bT: 0, dying: 0, spin: 0, smokeT: 0, mode: 'chase', modeT: 3 + Math.random() * 4, ofs: (Math.random() - 0.5) * 50, spd: 82 + Math.random() * 14, enemy: true });
     enemies.push(e);
   }
+  // Fires whenever there is a missile left (one every 0.35 s). It chases the locked target if there is one, else the
+  // enemy nearest the nose within 60° and 800 units; with nobody there it flies straight and bursts at the end.
+  // Returns what happened, for the page to show: 'lock' · 'seek' · 'dumb' · 'empty' · 'wait'.
+  let mslAt = -9;
   function fireMissile() {
-    if (cb.dead || cb.msl <= 0 || !cb.lock || cb.lockT < LOCK_TIME || lead.intro < 2) return;
-    cb.msl--;
+    if (cb.dead || lead.intro < 2 || time - mslAt < 0.35) return 'wait';
+    if (cb.msl <= 0) return 'empty';
+    let tgt = cb.lock && cb.lockT >= LOCK_TIME ? cb.lock : null, how = tgt ? 'lock' : 'dumb';
+    if (!tgt) {
+      const fx = Math.sin(lead.yaw), fy = -Math.cos(lead.yaw);
+      let best = 1e9;
+      for (const e of enemies) {
+        if (e.dying) continue;
+        const dx = e.x - lead.x, dy = e.y - lead.y, d = Math.hypot(dx, dy), c = (dx * fx + dy * fy) / (d || 1);
+        const score = d * (2 - c);                      // near and straight ahead wins
+        if (d < 800 && c > 0.5 && score < best) { best = score; tgt = e; how = 'seek'; }
+      }
+    }
+    cb.msl--; mslAt = time;
     const ax = axes(lead), side = cb.msl & 1 ? 1 : -1;
     modelPoint(lead, ax, side * lead.model.w * 0.3, lead.model.pivK, lead.model.pivY - 2, tmp3);
-    missiles.push({ x: tmp3[0], y: tmp3[1], z: tmp3[2], yaw: lead.yaw, spd: speedNow + 60, tgt: cb.lock, life: 5, smokeT: 0 });
+    missiles.push({ x: tmp3[0], y: tmp3[1], z: tmp3[2], yaw: lead.yaw, spd: speedNow + 60, tgt, life: tgt ? 5 : 3, smokeT: 0 });
+    // a puff of launch smoke where it leaves the rail
+    puff(1, tmp3[0], tmp3[1], tmp3[2], lead.vx * 0.3, lead.vy * 0.3, 2, 1.6, 3, 0.6, 0.9);
+    return how;
   }
   function hurtPlayer(n) {
     if (cb.dead || cb.inv > 0) return;
@@ -689,10 +709,11 @@ function createGame() {
       const m = missiles[i], t = m.tgt;
       m.life -= dt; m.spd = Math.min(330, m.spd + 240 * dt);
       if (t && !t.dying) {
-        const dx = t.x - m.x, dy = t.y - m.y;
-        m.yaw = wrapAngle(m.yaw + clamp(wrapAngle(Math.atan2(dx, -dy) - m.yaw) * 6, -3.2, 3.2) * dt);
-        m.z += clamp(t.z - m.z, -80 * dt, 80 * dt);
-        if (Math.hypot(dx, dy, t.z - m.z) < 9) { t.hp = 0; killEnemy(t); m.life = 0; }
+        // aim where the target will be when the missile gets there, not where it is now
+        const dx = t.x - m.x, dy = t.y - m.y, go = Math.min(1.5, Math.hypot(dx, dy) / m.spd), ax = dx + t.vx * go, ay = dy + t.vy * go;
+        m.yaw = wrapAngle(m.yaw + clamp(wrapAngle(Math.atan2(ax, -ay) - m.yaw) * 7, -4, 4) * dt);
+        m.z += clamp(t.z - m.z, -140 * dt, 140 * dt);
+        if (Math.hypot(dx, dy, t.z - m.z) < 10) { t.hp = 0; killEnemy(t); m.life = 0; }
       }
       const fx = Math.sin(m.yaw), fy = -Math.cos(m.yaw);
       m.x += fx * m.spd * dt; m.y += fy * m.spd * dt;
@@ -749,6 +770,16 @@ function createGame() {
     // where to turn; from behind or the seat the pointer also climbs and dives
     let want = 0, climb = keyClimb;
     if (!introDone) want = 0;
+    else if (stick.on) {
+      const mag = Math.hypot(stick.x, stick.y);
+      if (chase) {
+        want = stick.x * maxRate;
+        if (climb === 0) climb = stick.y;
+      } else if (mag > 0.3) {
+        const fx = stick.x * vCos - stick.y * vSin, fy = -stick.x * vSin - stick.y * vCos;
+        want = clamp(wrapAngle(Math.atan2(fx, -fy) - lead.yaw) * 2.6 * Math.min(1, mag * 1.4), -maxRate, maxRate);
+      }
+    }
     else if (keyMode) want = keyTurn * maxRate;
     else if (pointerOn && (chase || project(lead.x, lead.y, lead.z))) {
       if (chase) {
@@ -1633,6 +1664,8 @@ function createGame() {
     pointerMove(x, y) { keyMode = false; pointerOn = true; pointerX = x; pointerY = y; },
     pointerLeave() { pointerOn = false; },
     setHolding(v) { holding = v; },
+    // x right, y up, both −1..1; a small dead zone in the middle
+    setStick(on, x, y) { const m = Math.hypot(x, y), k = m < 0.12 ? 0 : (m - 0.12) / 0.88 / (m || 1); stick.on = on; stick.x = clamp(x * k, -1, 1); stick.y = clamp(y * k, -1, 1); },
     setKeys(turn, climb, b) { keyTurn = turn; keyClimb = climb; boostKey = b; if (turn !== 0) keyMode = true; },
     nudgeAlt(d) { altGoal = clamp(altGoal + d, floorS, P.ceiling); },
     startRoll(dir) { if (lead.stunt < 0 && !cb.dead) { lead.stunt = 0; lead.stuntDir = dir || (lead.yawRate >= 0 ? 1 : -1); camSpin = vK > 0.5 ? 1 : 0; } },

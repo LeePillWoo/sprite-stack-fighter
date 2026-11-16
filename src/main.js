@@ -2,6 +2,7 @@
 // (started a moment after the page shows, so the loading message is on screen while the world is built)
 setTimeout(() => {
   const $ = id => document.getElementById(id);
+  const mslBtn = document.querySelector('#pad button[data-k=msl]');
   const cv = $('c'), ctx = cv.getContext('2d'), wrap = $('wrap'), msg = $('msg'), fpsEl = $('fps'), bot = $('bot'), pad = $('pad');
   const qs = new URLSearchParams(location.search), debug = qs.has('debug');
   const game = createGame();
@@ -41,14 +42,14 @@ setTimeout(() => {
 
   // ── input: everything ends up in three calls — where the pointer is, whether the gun is held, and the keys
   const keys = {}, held = { gun: false, boost: false, up: false, down: false };
-  let mouseGun = false, steerId = -1;
+  let mouseGun = false;
   const sync = () => {
     game.setHolding(mouseGun || !!keys.Space || held.gun);
     game.setKeys((keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0),
       (keys.KeyW || keys.ArrowUp || held.up ? 1 : 0) - (keys.KeyS || keys.ArrowDown || held.down ? 1 : 0), !!(keys.ShiftLeft || keys.ShiftRight || held.boost));
   };
   const toBuf = e => { const r = cv.getBoundingClientRect(); game.pointerMove(((e.clientX - r.left) / r.width) * game.width, ((e.clientY - r.top) / r.height) * game.height); };
-  const useTouch = () => { if (touch) return; touch = true; tier = Math.max(tier, minTier()); pad.hidden = false; bot.hidden = true; fit(); };
+  const useTouch = () => { if (touch) return; touch = true; tier = Math.max(tier, minTier()); pad.hidden = false; bot.hidden = true; fit(); joyHome(); };
   // on a phone the first touch goes full screen and holds landscape (where the browser allows it; iPhones do not)
   let wentFull = false;
   const goFull = () => {
@@ -59,27 +60,54 @@ setTimeout(() => {
     Promise.resolve(req.call(el, { navigationUI: 'hide' })).then(() => screen.orientation?.lock?.('landscape')).catch(() => {}).finally(() => setTimeout(fit, 300));
   };
   addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { useTouch(); goFull(); } }, true);
-  if (matchMedia('(pointer: coarse)').matches) useTouch();
 
-  // mouse: move steers, left button fires, right button launches. A finger on the picture steers while it is down.
-  addEventListener('pointermove', e => { if (e.pointerType !== 'touch' || e.pointerId === steerId) toBuf(e); });
+  const MSL_MSG = { empty: '미사일 없음 — 5초마다 1발 충전', lock: '미사일 발사 — 락온', seek: '미사일 발사 — 추적', dumb: '미사일 발사' };
+  const launch = () => { const r = game.fireMissile(); if (MSL_MSG[r]) note(MSL_MSG[r]); };
+
+  // mouse: move steers, left button fires, right button launches
+  addEventListener('pointermove', e => { if (e.pointerType !== 'touch') toBuf(e); });
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch') return;
     toBuf(e);
-    if (e.pointerType === 'touch') { useTouch(); steerId = e.pointerId; return; }
     if (e.button === 0) { mouseGun = true; sync(); }
-    if (e.button === 2) game.fireMissile();
+    if (e.button === 2) launch();
   });
-  const release = e => {
-    if (e.pointerId === steerId) { steerId = -1; game.pointerLeave(); }
-    else if (e.pointerType !== 'touch' && e.button === 0) { mouseGun = false; sync(); }
-  };
-  addEventListener('pointerup', release);
-  addEventListener('pointercancel', release);
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in held) held[k] = false; mouseGun = false; sync(); });
+  addEventListener('pointerup', e => { if (e.pointerType !== 'touch' && e.button === 0) { mouseGun = false; sync(); } });
+
+  // touch: a stick that appears wherever a finger lands on the left half, and follows it until it lifts.
+  // At rest it waits, faint, at its home spot so it is clear where to touch.
+  const joy = $('joy'), knob = $('knob');
+  let joyId = -1, jx = 0, jy = 0;
+  const joyReach = () => joy.offsetWidth * 0.42;
+  const joyHome = () => { const r = wrap.getBoundingClientRect(); jx = Math.max(joy.offsetWidth * 0.6, r.width * 0.13); jy = r.height - Math.max(joy.offsetWidth * 0.7, r.height * 0.27); joy.style.left = jx + 'px'; joy.style.top = jy + 'px'; };
+  const joyOff = () => { joyId = -1; joy.classList.remove('on'); knob.style.transform = ''; joyHome(); game.setStick(false, 0, 0); };
+  wrap.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch' || e.target.closest('button') || joyId !== -1) return;
+    const r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x > r.width * 0.5) return;
+    e.preventDefault();
+    joyId = e.pointerId; jx = x; jy = y;
+    joy.style.left = x + 'px'; joy.style.top = y + 'px'; knob.style.transform = ''; joy.classList.add('on');
+    game.setStick(true, 0, 0);
+  });
+  addEventListener('pointermove', e => {
+    if (e.pointerId !== joyId) return;
+    const r = wrap.getBoundingClientRect(), R = joyReach();
+    let dx = e.clientX - r.left - jx, dy = e.clientY - r.top - jy;
+    const d = Math.hypot(dx, dy);
+    if (d > R) { dx *= R / d; dy *= R / d; }
+    knob.style.transform = `translate(${dx}px,${dy}px)`;
+    game.setStick(true, dx / R, -dy / R);
+  });
+  const joyUp = e => { if (e.pointerId === joyId) joyOff(); };
+  addEventListener('pointerup', joyUp);
+  addEventListener('pointercancel', joyUp);
+  addEventListener('resize', () => { if (joyId === -1) joyHome(); });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in held) held[k] = false; mouseGun = false; sync(); joyOff(); });
 
   // touch buttons: some are held (gun, thrust, climb, dive), some are taps
-  const tap = { msl: () => game.fireMissile(), roll: () => game.startRoll(0), view: () => game.toggleView(), calm: () => note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔')) };
+  const tap = { msl: launch, roll: () => game.startRoll(0), view: () => game.toggleView(), calm: () => note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔')) };
   for (const b of pad.querySelectorAll('button')) {
     const k = b.dataset.k;
     const set = (e, on) => {
@@ -94,6 +122,8 @@ setTimeout(() => {
     b.addEventListener('contextmenu', e => e.preventDefault());
   }
 
+  if (matchMedia('(pointer: coarse)').matches) useTouch();   // (after the stick exists)
+
   addEventListener('keydown', e => {
     keys[e.code] = true; sync();
     if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -101,7 +131,7 @@ setTimeout(() => {
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') game.setView(+e.code[5] - 1);
     if (e.code === 'KeyQ') game.startRoll(-1);
     if (e.code === 'KeyE') game.startRoll(1);
-    if (e.code === 'KeyF') game.fireMissile();
+    if (e.code === 'KeyF') launch();
     if (e.code === 'KeyT') game.cycleTime();
     if (e.code === 'KeyC') note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔'));
     if (e.code === 'KeyB') note('움직임 보정: ' + ['끔', '약', '강'][game.cycleSmooth()]);
@@ -134,6 +164,7 @@ setTimeout(() => {
       fpsEl.textContent = debug ? `${game.fps} fps · ${game.ms.toFixed(1)} ms · ${TIER_NAME[tier]} ${game.width}x${game.height}` : '';
       if ((noteT -= acc) <= 0 && !(touch && innerHeight > innerWidth)) msg.textContent = game.cb.dead ? '격추당했습니다 — 재출격 중…' : '';
       bot.className = game.view === 2 ? 'top' : '';
+      mslBtn.textContent = '미사일 ' + game.cb.msl;
       acc = 0; frames = 0; cost = 0;
     }
     requestAnimationFrame(frame);

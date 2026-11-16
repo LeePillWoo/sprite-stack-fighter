@@ -25,6 +25,16 @@
        font:700 13px/1 system-ui,"Malgun Gothic",sans-serif;touch-action:none;-webkit-tap-highlight-color:transparent}
   #pad button.big{width:clamp(56px,17vh,78px);height:clamp(56px,17vh,78px);font-size:16px;border-color:#ffd65a;color:#ffe9a8}
   #pad button.on{background:#60e896;color:#082c28} #pad button.big.on{background:#ffd65a}
+  #pad .top{position:absolute;top:max(8px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:flex;gap:6px}
+  #pad .top button{width:auto;height:30px;padding:0 12px;font-size:12px}
+  #pad button.msl{border-color:#ff9a5a;color:#ffd2b0}
+  /* the floating stick: a ring and a knob, faint while it waits at home */
+  #joy{position:absolute;width:clamp(96px,30vh,136px);aspect-ratio:1;transform:translate(-50%,-50%);border:2px solid #60e896;border-radius:50%;
+       background:radial-gradient(#082c2866 55%,#082c28aa);opacity:.35;pointer-events:none;transition:opacity .15s}
+  #joy.on{opacity:.9;transition:none}
+  #knob{position:absolute;left:50%;top:50%;width:44%;height:44%;margin:-22% 0 0 -22%;border-radius:50%;background:#60e896cc;border:2px solid #befed6;box-shadow:0 0 0 3px #082c2866}
+  #joy::after{content:'조종';position:absolute;left:0;right:0;top:100%;margin-top:4px;text-align:center;color:#befed6;font:700 11px/1 system-ui,"Malgun Gothic",sans-serif;text-shadow:0 1px 0 #000a}
+  #joy.on::after{content:none}
   [hidden]{display:none!important}
 </style>
 </head>
@@ -35,8 +45,9 @@
   <div id="fps"></div>
   <div id="bot">마우스: 선회(뒤·조종석 시점은 위아래로 상승·하강) · 좌클릭/Space: 발칸 · 우클릭/F: 미사일 · Shift: 가속 · Q/E: 롤 · W/S·휠: 고도 · 1/2/3: 시점 · T: 시간대 · B: 움직임 보정 · C: 화면 안정 · R: 해상도</div>
   <div id="pad" hidden>
-    <div class="grp l"><div class="col"><button data-k="up">▲</button><button data-k="down">▼</button></div><button data-k="view">시점</button><button data-k="calm">안정</button></div>
-    <div class="grp r"><div class="col"><button data-k="roll">롤</button><button data-k="boost">가속</button></div><button data-k="msl">미사일</button><button data-k="gun" class="big">발칸</button></div>
+    <div id="joy"><div id="knob"></div></div>
+    <div class="top"><button data-k="view">시점</button><button data-k="calm">안정</button></div>
+    <div class="grp r"><div class="col"><button data-k="up">▲</button><button data-k="down">▼</button></div><div class="col"><button data-k="roll">롤</button><button data-k="boost">가속</button></div><button data-k="msl" class="msl">미사일 4</button><button data-k="gun" class="big">발칸</button></div>
   </div>
 </div>
 <script>
@@ -1315,6 +1326,7 @@ function createGame() {
   let PX = 1;   // how thick a 1-pixel line is at this resolution (1 at 360 rows, 3 at 1080)
   let pivotY = 0, cockpit = null, colLo = 0, colHi = 0, rowLo = 0, rowHi = 0, frameH = 0;
   let time = 0, holding = false, pointerOn = false, pointerX = 0, pointerY = 0, boostKey = false, keyTurn = 0, keyClimb = 0, keyMode = false;
+  const stick = { on: false, x: 0, y: 0 };
   let altGoal = P.altitude, climbV = 0, climbTilt = 0, floorS = 0, speedNow = P.speed, boost = 0;
   const cam = { x: 0, y: 0, yaw: 0, alt: P.altitude }, follow = { x: 0, y: 0, alt: P.altitude };
   let viewTarget = 0;
@@ -1480,12 +1492,31 @@ function createGame() {
     Object.assign(e, { hp: 8, gunT: 1 + Math.random() * 2, burst: 0, bT: 0, dying: 0, spin: 0, smokeT: 0, mode: 'chase', modeT: 3 + Math.random() * 4, ofs: (Math.random() - 0.5) * 50, spd: 82 + Math.random() * 14, enemy: true });
     enemies.push(e);
   }
+  // Fires whenever there is a missile left (one every 0.35 s). It chases the locked target if there is one, else the
+  // enemy nearest the nose within 60° and 800 units; with nobody there it flies straight and bursts at the end.
+  // Returns what happened, for the page to show: 'lock' · 'seek' · 'dumb' · 'empty' · 'wait'.
+  let mslAt = -9;
   function fireMissile() {
-    if (cb.dead || cb.msl <= 0 || !cb.lock || cb.lockT < LOCK_TIME || lead.intro < 2) return;
-    cb.msl--;
+    if (cb.dead || lead.intro < 2 || time - mslAt < 0.35) return 'wait';
+    if (cb.msl <= 0) return 'empty';
+    let tgt = cb.lock && cb.lockT >= LOCK_TIME ? cb.lock : null, how = tgt ? 'lock' : 'dumb';
+    if (!tgt) {
+      const fx = Math.sin(lead.yaw), fy = -Math.cos(lead.yaw);
+      let best = 1e9;
+      for (const e of enemies) {
+        if (e.dying) continue;
+        const dx = e.x - lead.x, dy = e.y - lead.y, d = Math.hypot(dx, dy), c = (dx * fx + dy * fy) / (d || 1);
+        const score = d * (2 - c);                      // near and straight ahead wins
+        if (d < 800 && c > 0.5 && score < best) { best = score; tgt = e; how = 'seek'; }
+      }
+    }
+    cb.msl--; mslAt = time;
     const ax = axes(lead), side = cb.msl & 1 ? 1 : -1;
     modelPoint(lead, ax, side * lead.model.w * 0.3, lead.model.pivK, lead.model.pivY - 2, tmp3);
-    missiles.push({ x: tmp3[0], y: tmp3[1], z: tmp3[2], yaw: lead.yaw, spd: speedNow + 60, tgt: cb.lock, life: 5, smokeT: 0 });
+    missiles.push({ x: tmp3[0], y: tmp3[1], z: tmp3[2], yaw: lead.yaw, spd: speedNow + 60, tgt, life: tgt ? 5 : 3, smokeT: 0 });
+    // a puff of launch smoke where it leaves the rail
+    puff(1, tmp3[0], tmp3[1], tmp3[2], lead.vx * 0.3, lead.vy * 0.3, 2, 1.6, 3, 0.6, 0.9);
+    return how;
   }
   function hurtPlayer(n) {
     if (cb.dead || cb.inv > 0) return;
@@ -1596,10 +1627,11 @@ function createGame() {
       const m = missiles[i], t = m.tgt;
       m.life -= dt; m.spd = Math.min(330, m.spd + 240 * dt);
       if (t && !t.dying) {
-        const dx = t.x - m.x, dy = t.y - m.y;
-        m.yaw = wrapAngle(m.yaw + clamp(wrapAngle(Math.atan2(dx, -dy) - m.yaw) * 6, -3.2, 3.2) * dt);
-        m.z += clamp(t.z - m.z, -80 * dt, 80 * dt);
-        if (Math.hypot(dx, dy, t.z - m.z) < 9) { t.hp = 0; killEnemy(t); m.life = 0; }
+        // aim where the target will be when the missile gets there, not where it is now
+        const dx = t.x - m.x, dy = t.y - m.y, go = Math.min(1.5, Math.hypot(dx, dy) / m.spd), ax = dx + t.vx * go, ay = dy + t.vy * go;
+        m.yaw = wrapAngle(m.yaw + clamp(wrapAngle(Math.atan2(ax, -ay) - m.yaw) * 7, -4, 4) * dt);
+        m.z += clamp(t.z - m.z, -140 * dt, 140 * dt);
+        if (Math.hypot(dx, dy, t.z - m.z) < 10) { t.hp = 0; killEnemy(t); m.life = 0; }
       }
       const fx = Math.sin(m.yaw), fy = -Math.cos(m.yaw);
       m.x += fx * m.spd * dt; m.y += fy * m.spd * dt;
@@ -1656,6 +1688,16 @@ function createGame() {
     // where to turn; from behind or the seat the pointer also climbs and dives
     let want = 0, climb = keyClimb;
     if (!introDone) want = 0;
+    else if (stick.on) {
+      const mag = Math.hypot(stick.x, stick.y);
+      if (chase) {
+        want = stick.x * maxRate;
+        if (climb === 0) climb = stick.y;
+      } else if (mag > 0.3) {
+        const fx = stick.x * vCos - stick.y * vSin, fy = -stick.x * vSin - stick.y * vCos;
+        want = clamp(wrapAngle(Math.atan2(fx, -fy) - lead.yaw) * 2.6 * Math.min(1, mag * 1.4), -maxRate, maxRate);
+      }
+    }
     else if (keyMode) want = keyTurn * maxRate;
     else if (pointerOn && (chase || project(lead.x, lead.y, lead.z))) {
       if (chase) {
@@ -2540,6 +2582,8 @@ function createGame() {
     pointerMove(x, y) { keyMode = false; pointerOn = true; pointerX = x; pointerY = y; },
     pointerLeave() { pointerOn = false; },
     setHolding(v) { holding = v; },
+    // x right, y up, both −1..1; a small dead zone in the middle
+    setStick(on, x, y) { const m = Math.hypot(x, y), k = m < 0.12 ? 0 : (m - 0.12) / 0.88 / (m || 1); stick.on = on; stick.x = clamp(x * k, -1, 1); stick.y = clamp(y * k, -1, 1); },
     setKeys(turn, climb, b) { keyTurn = turn; keyClimb = climb; boostKey = b; if (turn !== 0) keyMode = true; },
     nudgeAlt(d) { altGoal = clamp(altGoal + d, floorS, P.ceiling); },
     startRoll(dir) { if (lead.stunt < 0 && !cb.dead) { lead.stunt = 0; lead.stuntDir = dir || (lead.yawRate >= 0 ? 1 : -1); camSpin = vK > 0.5 ? 1 : 0; } },
@@ -2558,6 +2602,7 @@ function createGame() {
 // (started a moment after the page shows, so the loading message is on screen while the world is built)
 setTimeout(() => {
   const $ = id => document.getElementById(id);
+  const mslBtn = document.querySelector('#pad button[data-k=msl]');
   const cv = $('c'), ctx = cv.getContext('2d'), wrap = $('wrap'), msg = $('msg'), fpsEl = $('fps'), bot = $('bot'), pad = $('pad');
   const qs = new URLSearchParams(location.search), debug = qs.has('debug');
   const game = createGame();
@@ -2597,14 +2642,14 @@ setTimeout(() => {
 
   // ── input: everything ends up in three calls — where the pointer is, whether the gun is held, and the keys
   const keys = {}, held = { gun: false, boost: false, up: false, down: false };
-  let mouseGun = false, steerId = -1;
+  let mouseGun = false;
   const sync = () => {
     game.setHolding(mouseGun || !!keys.Space || held.gun);
     game.setKeys((keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0),
       (keys.KeyW || keys.ArrowUp || held.up ? 1 : 0) - (keys.KeyS || keys.ArrowDown || held.down ? 1 : 0), !!(keys.ShiftLeft || keys.ShiftRight || held.boost));
   };
   const toBuf = e => { const r = cv.getBoundingClientRect(); game.pointerMove(((e.clientX - r.left) / r.width) * game.width, ((e.clientY - r.top) / r.height) * game.height); };
-  const useTouch = () => { if (touch) return; touch = true; tier = Math.max(tier, minTier()); pad.hidden = false; bot.hidden = true; fit(); };
+  const useTouch = () => { if (touch) return; touch = true; tier = Math.max(tier, minTier()); pad.hidden = false; bot.hidden = true; fit(); joyHome(); };
   // on a phone the first touch goes full screen and holds landscape (where the browser allows it; iPhones do not)
   let wentFull = false;
   const goFull = () => {
@@ -2615,27 +2660,54 @@ setTimeout(() => {
     Promise.resolve(req.call(el, { navigationUI: 'hide' })).then(() => screen.orientation?.lock?.('landscape')).catch(() => {}).finally(() => setTimeout(fit, 300));
   };
   addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { useTouch(); goFull(); } }, true);
-  if (matchMedia('(pointer: coarse)').matches) useTouch();
 
-  // mouse: move steers, left button fires, right button launches. A finger on the picture steers while it is down.
-  addEventListener('pointermove', e => { if (e.pointerType !== 'touch' || e.pointerId === steerId) toBuf(e); });
+  const MSL_MSG = { empty: '미사일 없음 — 5초마다 1발 충전', lock: '미사일 발사 — 락온', seek: '미사일 발사 — 추적', dumb: '미사일 발사' };
+  const launch = () => { const r = game.fireMissile(); if (MSL_MSG[r]) note(MSL_MSG[r]); };
+
+  // mouse: move steers, left button fires, right button launches
+  addEventListener('pointermove', e => { if (e.pointerType !== 'touch') toBuf(e); });
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch') return;
     toBuf(e);
-    if (e.pointerType === 'touch') { useTouch(); steerId = e.pointerId; return; }
     if (e.button === 0) { mouseGun = true; sync(); }
-    if (e.button === 2) game.fireMissile();
+    if (e.button === 2) launch();
   });
-  const release = e => {
-    if (e.pointerId === steerId) { steerId = -1; game.pointerLeave(); }
-    else if (e.pointerType !== 'touch' && e.button === 0) { mouseGun = false; sync(); }
-  };
-  addEventListener('pointerup', release);
-  addEventListener('pointercancel', release);
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in held) held[k] = false; mouseGun = false; sync(); });
+  addEventListener('pointerup', e => { if (e.pointerType !== 'touch' && e.button === 0) { mouseGun = false; sync(); } });
+
+  // touch: a stick that appears wherever a finger lands on the left half, and follows it until it lifts.
+  // At rest it waits, faint, at its home spot so it is clear where to touch.
+  const joy = $('joy'), knob = $('knob');
+  let joyId = -1, jx = 0, jy = 0;
+  const joyReach = () => joy.offsetWidth * 0.42;
+  const joyHome = () => { const r = wrap.getBoundingClientRect(); jx = Math.max(joy.offsetWidth * 0.6, r.width * 0.13); jy = r.height - Math.max(joy.offsetWidth * 0.7, r.height * 0.27); joy.style.left = jx + 'px'; joy.style.top = jy + 'px'; };
+  const joyOff = () => { joyId = -1; joy.classList.remove('on'); knob.style.transform = ''; joyHome(); game.setStick(false, 0, 0); };
+  wrap.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch' || e.target.closest('button') || joyId !== -1) return;
+    const r = wrap.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x > r.width * 0.5) return;
+    e.preventDefault();
+    joyId = e.pointerId; jx = x; jy = y;
+    joy.style.left = x + 'px'; joy.style.top = y + 'px'; knob.style.transform = ''; joy.classList.add('on');
+    game.setStick(true, 0, 0);
+  });
+  addEventListener('pointermove', e => {
+    if (e.pointerId !== joyId) return;
+    const r = wrap.getBoundingClientRect(), R = joyReach();
+    let dx = e.clientX - r.left - jx, dy = e.clientY - r.top - jy;
+    const d = Math.hypot(dx, dy);
+    if (d > R) { dx *= R / d; dy *= R / d; }
+    knob.style.transform = `translate(${dx}px,${dy}px)`;
+    game.setStick(true, dx / R, -dy / R);
+  });
+  const joyUp = e => { if (e.pointerId === joyId) joyOff(); };
+  addEventListener('pointerup', joyUp);
+  addEventListener('pointercancel', joyUp);
+  addEventListener('resize', () => { if (joyId === -1) joyHome(); });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in held) held[k] = false; mouseGun = false; sync(); joyOff(); });
 
   // touch buttons: some are held (gun, thrust, climb, dive), some are taps
-  const tap = { msl: () => game.fireMissile(), roll: () => game.startRoll(0), view: () => game.toggleView(), calm: () => note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔')) };
+  const tap = { msl: launch, roll: () => game.startRoll(0), view: () => game.toggleView(), calm: () => note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔')) };
   for (const b of pad.querySelectorAll('button')) {
     const k = b.dataset.k;
     const set = (e, on) => {
@@ -2650,6 +2722,8 @@ setTimeout(() => {
     b.addEventListener('contextmenu', e => e.preventDefault());
   }
 
+  if (matchMedia('(pointer: coarse)').matches) useTouch();   // (after the stick exists)
+
   addEventListener('keydown', e => {
     keys[e.code] = true; sync();
     if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -2657,7 +2731,7 @@ setTimeout(() => {
     if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3') game.setView(+e.code[5] - 1);
     if (e.code === 'KeyQ') game.startRoll(-1);
     if (e.code === 'KeyE') game.startRoll(1);
-    if (e.code === 'KeyF') game.fireMissile();
+    if (e.code === 'KeyF') launch();
     if (e.code === 'KeyT') game.cycleTime();
     if (e.code === 'KeyC') note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔'));
     if (e.code === 'KeyB') note('움직임 보정: ' + ['끔', '약', '강'][game.cycleSmooth()]);
@@ -2690,6 +2764,7 @@ setTimeout(() => {
       fpsEl.textContent = debug ? `${game.fps} fps · ${game.ms.toFixed(1)} ms · ${TIER_NAME[tier]} ${game.width}x${game.height}` : '';
       if ((noteT -= acc) <= 0 && !(touch && innerHeight > innerWidth)) msg.textContent = game.cb.dead ? '격추당했습니다 — 재출격 중…' : '';
       bot.className = game.view === 2 ? 'top' : '';
+      mslBtn.textContent = '미사일 ' + game.cb.msl;
       acc = 0; frames = 0; cost = 0;
     }
     requestAnimationFrame(frame);
