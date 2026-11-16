@@ -8,7 +8,7 @@ const src = ['parts/jets.js', 'parts/cockpit.js', 'src/engine.js'].map(f => read
 const game = new Function('performance', src + '\nreturn createGame;')(performance)();
 let seed = 12345;
 const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
-for (const [w, h] of [[640, 360], [426, 240], [704, 396]]) {
+for (const [w, h] of [[640, 360], [266, 150], [1280, 720], [1920, 1080]]) {
   game.resize(w, h);
   for (let i = 0; i < 900; i++) {
     if (i % 40 === 0) game.pointerMove(rnd() * w, rnd() * h);

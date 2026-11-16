@@ -405,6 +405,7 @@ function createGame() {
   let W = 0, H = 0, fb = new Uint32Array(0), bytes = new Uint8ClampedArray(0), jetMask = new Uint8Array(0);
   let colY = new Int32Array(0), cloudY = new Int32Array(0), zbuf = new Float32Array(0), backdrop = new Uint32Array(0);
   let sheetSide = 0, sheet = new Uint32Array(0), sheetMask = new Uint8Array(0), sheetColY = new Int32Array(0), sheetZ = new Float32Array(0), sheetBackdrop = new Uint32Array(0);
+  let PX = 1;   // how thick a 1-pixel line is at this resolution (1 at 360 rows, 3 at 1080)
   let pivotY = 0, cockpit = null, colLo = 0, colHi = 0, rowLo = 0, rowHi = 0, frameH = 0;
   let time = 0, holding = false, pointerOn = false, pointerX = 0, pointerY = 0, boostKey = false, keyTurn = 0, keyClimb = 0, keyMode = false;
   let altGoal = P.altitude, climbV = 0, climbTilt = 0, floorS = 0, speedNow = P.speed, boost = 0;
@@ -466,7 +467,7 @@ function createGame() {
     const buf = new ArrayBuffer(W * H * 4);
     fb = new Uint32Array(buf); bytes = new Uint8ClampedArray(buf);
     jetMask = new Uint8Array(W * H); colY = new Int32Array(W); zbuf = new Float32Array(W * H); backdrop = new Uint32Array(W * H);
-    pivotY = Math.round(H * 0.34);
+    pivotY = Math.round(H * 0.34); PX = Math.max(1, Math.round(H / 360));
     const tall = Math.max(pivotY, H - pivotY);
     sheetSide = (Math.ceil(Math.sqrt((W / 2) * (W / 2) + tall * tall)) + 2) * 2;
     sheet = new Uint32Array(sheetSide * sheetSide); sheetMask = new Uint8Array(sheetSide * sheetSide); sheetColY = new Int32Array(sheetSide);
@@ -1099,7 +1100,7 @@ function createGame() {
         if (has) {
           const span = Math.max(Math.abs(sxp - prevX), Math.abs(syp - prevY));
           if (span < 700) {
-            const steps = Math.max(1, Math.ceil(span)), alpha = age < 0.5 ? 1 : (1 - age) * 2, col = age < 0.25 ? trailPal[0] : age < 0.6 ? trailPal[1] : trailPal[2], thick = prM * JS > 1.3 ? 2 : 1;
+            const steps = Math.max(1, Math.ceil(span)), alpha = age < 0.5 ? 1 : (1 - age) * 2, col = age < 0.25 ? trailPal[0] : age < 0.6 ? trailPal[1] : trailPal[2], thick = (prM * JS > 1.3 ? 2 : 1) * PX;
             for (let k = 0; k < steps; k++) {
               const x0 = Math.round(prevX + ((sxp - prevX) * k) / steps), y0 = Math.round(prevY + ((syp - prevY) * k) / steps);
               for (let yy = y0; yy < y0 + thick; yy++) for (let xx = x0; xx < x0 + thick; xx++) {
@@ -1146,7 +1147,7 @@ function createGame() {
     for (const s of sparks) {
       if (s.g > 85 && s.g < 95) { line3(s.x - s.vx * 0.03, s.y - s.vy * 0.03, s.z - s.vz * 0.03, s.x, s.y, s.z, s.col, firePal[0]); continue; }   // burning debris leaves a streak
       if (!project(s.x, s.y, s.z)) continue;
-      const x = prX | 0, y = prY | 0, sz = prM > 1.6 ? 2 : 1;
+      const x = prX | 0, y = prY | 0, sz = (prM * JS > 0.55 ? 2 : 1) * PX;
       for (let yy = y; yy < y + sz; yy++) for (let xx = x; xx < x + sz; xx++) {
         if (xx < colLo || yy < rowLo || xx >= colHi || yy >= rowHi || _zb[yy * W + xx] < prV - 2) continue;
         _fb[yy * W + xx] = s.col;
@@ -1159,7 +1160,7 @@ function createGame() {
     if (!project(x1, y1, z1)) return;
     const span = Math.max(Math.abs(prX - ax), Math.abs(prY - ay));
     if (span > 500) return;
-    const steps = Math.max(1, Math.ceil(span)), thick = am > 1.5 ? 2 : 1, _fb = fb, _zb = zbuf;
+    const steps = Math.max(1, Math.ceil(span)), thick = (am * JS > 0.5 ? 2 : 1) * PX, _fb = fb, _zb = zbuf;
     for (let k = 0; k <= steps; k++) {
       const x = Math.round(ax + ((prX - ax) * k) / steps), y = Math.round(ay + ((prY - ay) * k) / steps);
       for (let yy = y; yy < y + thick; yy++) for (let xx = x; xx < x + thick; xx++) {
@@ -1453,7 +1454,7 @@ function createGame() {
     }
   }
   function drawPanels() {
-    const u = H >= 330 ? 2 : 1, gw = 4 * u, ph = 5 * u + 6, pad = 4;
+    const u = Math.max(1, Math.round(H / 180)), gw = 4 * u, ph = 5 * u + 3 * u, pad = 2 * u;
     const box = (x, y, label, value) => {
       const w = (label.length + value.length + 1) * gw + 8;
       panel(x, y, w, ph);
@@ -1465,7 +1466,7 @@ function createGame() {
     const kw = (4 + 1 + 3) * gw + 8;
     box(W - 5 - kw, 5, 'KILL', String(cb.kills).padStart(3, '0'));
     // hull and missiles, under the speed and height (the bottom corners stay clear for touch buttons)
-    const by = 5 + (ph + 2) * 3, bw = 3 * gw + 8 + 4 * (3 * u + 2) + 6, bx = 5;
+    const by = 5 + (ph + 2) * 3, bw = pad * 2 + 4 * gw + 4 * (3 * u + 2) - 2, bx = 5;
     panel(bx, by, bw, ph); text(bx + pad, by + 3, 'MSL', HUD_RIM, u);
     for (let i = 0; i < 4; i++) rect(bx + pad + 4 * gw + i * (3 * u + 2), by + 3, 3 * u, 5 * u, i < cb.msl ? pack(255, 214, 90) : HUD_DIM);
     panel(bx, by - ph - 2, bw, ph); text(bx + pad, by - ph + 1, 'HP', HUD_RIM, u);
@@ -1500,19 +1501,19 @@ function createGame() {
   const hline = (x0, x1, y, col) => { if (y < 0 || y >= H) return; for (let x = Math.max(0, x0); x <= Math.min(W - 1, x1); x++) fb[y * W + x] = col; };
   const vline = (x, y0, y1, col) => { if (x < 0 || x >= W) return; for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) fb[y * W + x] = col; };
   function bracket(x, y, r, col) {
-    const L = Math.max(3, r >> 1);
+    const L = Math.max(3 * PX, r >> 1), t = PX;
     x |= 0; y |= 0;
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
       const cx = x + sx * r, cy = y + sy * r;
-      hline(Math.min(cx, cx - sx * L), Math.max(cx, cx - sx * L), cy, col); vline(cx, Math.min(cy, cy - sy * L), Math.max(cy, cy - sy * L), col);
+      for (let i = 0; i < t; i++) { hline(Math.min(cx, cx - sx * L), Math.max(cx, cx - sx * L), cy - sy * i, col); vline(cx - sx * i, Math.min(cy, cy - sy * L), Math.max(cy, cy - sy * L), col); }
     }
   }
   function drawHud() {
     const red = pack(255, 60, 48), yel = pack(255, 226, 74), org = pack(255, 150, 40), dark = pack(40, 22, 10), grn = pack(120, 255, 164);
     const t = cb.lock;
     if (t && t.vis) {
-      const locked = cb.lockT >= LOCK_TIME, r = Math.round(clamp(t.sm * 34, 9, 40) + (locked ? 0 : (1 - cb.lockT / LOCK_TIME) * 14));
-      if (locked || ((time * 10) | 0) & 1) { bracket(t.sx, t.sy, r, locked ? red : yel); if (locked) text((t.sx | 0) - 8, (t.sy | 0) + r + 3, 'LOCK', red); }
+      const locked = cb.lockT >= LOCK_TIME, r = Math.round(clamp(t.sm * 34, 9 * PX, 40 * PX) + (locked ? 0 : (1 - cb.lockT / LOCK_TIME) * 14 * PX));
+      if (locked || ((time * 10) | 0) & 1) { bracket(t.sx, t.sy, r, locked ? red : yel); if (locked) text((t.sx | 0) - 8 * PX, (t.sy | 0) + r + 3 * PX, 'LOCK', red, PX); }
     }
     for (const e of enemies) {   // arrows on the frame edge towards enemies that are out of view
       if (e.dying) continue;
@@ -1522,16 +1523,18 @@ function createGame() {
       if (e.sv < -1 / Math.max(vQ, 1e-6) * 0.8) { dx = -dx; dy = Math.abs(dy) + H; }   // behind the camera
       const k = Math.min((dx > 0 ? W - 8 - vCx : vCx - 8) / Math.abs(dx || 1e-9), (dy > 0 ? H - 8 - vCy : vCy - 8) / Math.abs(dy || 1e-9));
       const x = Math.round(vCx + dx * k), y = Math.round(vCy + dy * k);
-      for (let yy = -3; yy <= 3; yy++) for (let xx = -3; xx <= 3; xx++) {
+      const R = 3 * PX;
+      for (let yy = -R; yy <= R; yy++) for (let xx = -R; xx <= R; xx++) {
         const d = Math.abs(xx) + Math.abs(yy);
-        if (d <= 3 && x + xx >= 0 && y + yy >= 0 && x + xx < W && y + yy < H) fb[(y + yy) * W + x + xx] = d === 3 ? dark : e === t ? red : org;
+        if (d <= R && x + xx >= 0 && y + yy >= 0 && x + xx < W && y + yy < H) fb[(y + yy) * W + x + xx] = d > R - PX ? dark : e === t ? red : org;
       }
     }
     if (vC > 0.6 && !cb.dead && lead.intro > 2) {   // gun pipper: where the rounds will be in half a second
       const ax = axes(lead);
       if (project(lead.x + ax.fx * 300, lead.y + ax.fy * 300, lead.z + ax.fz * 300)) {
         const x = prX | 0, y = prY | 0;
-        hline(x - 6, x - 3, y, grn); hline(x + 3, x + 6, y, grn); vline(x, y - 6, y - 3, grn); vline(x, y + 3, y + 6, grn); if (x >= 0 && y >= 0 && x < W && y < H) fb[y * W + x] = grn;
+        const p = PX;
+        rect(x - 6 * p, y, 4 * p, p, grn); rect(x + 3 * p, y, 4 * p, p, grn); rect(x, y - 6 * p, p, 4 * p, grn); rect(x, y + 3 * p, p, 4 * p, grn); rect(x, y, p, p, grn);
       }
     }
   }
@@ -1540,7 +1543,7 @@ function createGame() {
     const _fb = fb, Wd = W, red = pack(255, 48, 36), e = Math.min(y, H - 1 - y), by = (y & 3) << 2;
     for (let x = 0, o = y * Wd; x < Wd; x++, o++) {
       const d = Math.min(e, x, Wd - 1 - x);
-      if (d < 26 && (26 - d) * k > BAYER[by | (x & 3)] * 30) _fb[o] = mixCol(_fb[o], red, 130);
+      if (d < 26 * PX && (26 * PX - d) * k > BAYER[by | (x & 3)] * 30 * PX) _fb[o] = mixCol(_fb[o], red, 130);
     }
   }
   function tintHit() {
