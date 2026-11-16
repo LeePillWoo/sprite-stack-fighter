@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Sprite Stack Fighter</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1d33;overflow:hidden;overscroll-behavior:none}
+  body{display:grid;place-items:center;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  #wrap{position:relative;line-height:0}
+  canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges;cursor:crosshair;touch-action:none}
+  #bot{position:absolute;left:0;right:0;bottom:0;padding:7px 10px;text-align:center;pointer-events:none;
+       color:#eaf6ff;font:600 12px/1.35 system-ui,"Malgun Gothic",sans-serif;letter-spacing:.02em;
+       text-shadow:0 1px 0 #000a;background:linear-gradient(transparent,#0007)}
+  #bot.top{bottom:auto;top:0;background:linear-gradient(#0007,transparent)}
+  #msg{position:absolute;left:0;right:0;top:38%;text-align:center;pointer-events:none;color:#fff;
+       font:800 22px/1.3 system-ui,"Malgun Gothic",sans-serif;text-shadow:0 2px 0 #000a,0 0 12px #000a}
+  #fps{position:absolute;left:50%;transform:translateX(-50%);top:6px;color:#fff;font:600 11px/1 ui-monospace,monospace;text-shadow:0 1px 0 #000;pointer-events:none}
+  /* touch buttons, in the style of the in-game read-outs */
+  #pad .grp{position:absolute;bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:clamp(5px,1.6vh,8px);align-items:flex-end}
+  #pad .l{left:max(10px,env(safe-area-inset-left))} #pad .r{right:max(10px,env(safe-area-inset-right))}
+  #pad .col{display:flex;flex-direction:column;gap:clamp(5px,1.6vh,8px)}
+  #pad button{width:clamp(40px,11.5vh,54px);height:clamp(40px,11.5vh,54px);padding:0;border:2px solid #60e896;border-radius:0;background:#082c2888;color:#befed6;
+       font:700 13px/1 system-ui,"Malgun Gothic",sans-serif;touch-action:none;-webkit-tap-highlight-color:transparent}
+  #pad button.big{width:clamp(56px,17vh,78px);height:clamp(56px,17vh,78px);font-size:16px;border-color:#ffd65a;color:#ffe9a8}
+  #pad button.on{background:#60e896;color:#082c28} #pad button.big.on{background:#ffd65a}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="msg">불러오는 중…</div>
+  <div id="fps"></div>
+  <div id="bot">마우스: 선회(뒤·조종석 시점은 위아래로 상승·하강) · 좌클릭/Space: 발칸 · 우클릭/F: 미사일 · Shift: 가속 · Q/E: 롤 · W/S·휠: 고도 · 1/2/3: 시점 · T: 시간대 · B: 움직임 보정 · C: 화면 안정 · R: 해상도</div>
+  <div id="pad" hidden>
+    <div class="grp l"><div class="col"><button data-k="up">▲</button><button data-k="down">▼</button></div><button data-k="view">시점</button><button data-k="calm">안정</button></div>
+    <div class="grp r"><div class="col"><button data-k="roll">롤</button><button data-k="boost">가속</button></div><button data-k="msl">미사일</button><button data-k="gun" class="big">발칸</button></div>
+  </div>
+</div>
+<script>
+/*@include parts/jets.js*/
+/*@include parts/cockpit.js*/
+/*@include src/engine.js*/
+/*@include src/main.js*/
+</script>
+</body>
+</html>
