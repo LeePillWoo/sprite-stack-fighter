@@ -2,7 +2,6 @@
 // (started a moment after the page shows, so the loading message is on screen while the world is built)
 setTimeout(() => {
   const $ = id => document.getElementById(id);
-  const mslBtn = document.querySelector('#pad button[data-k=msl]');
   const cv = $('c'), ctx = cv.getContext('2d'), wrap = $('wrap'), msg = $('msg'), fpsEl = $('fps'), bot = $('bot'), pad = $('pad');
   const qs = new URLSearchParams(location.search), debug = qs.has('debug');
   const game = createGame();
@@ -41,15 +40,15 @@ setTimeout(() => {
   const note = t => { msg.textContent = t; noteT = 1.6; };
 
   // ── input: everything ends up in three calls — where the pointer is, whether the gun is held, and the keys
-  const keys = {}, held = { gun: false, boost: false, up: false, down: false };
+  const keys = {}, held = { boost: false };
   let mouseGun = false;
   const sync = () => {
-    game.setHolding(mouseGun || !!keys.Space || held.gun);
+    game.setHolding(mouseGun || !!keys.Space);
     game.setKeys((keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0),
-      (keys.KeyW || keys.ArrowUp || held.up ? 1 : 0) - (keys.KeyS || keys.ArrowDown || held.down ? 1 : 0), !!(keys.ShiftLeft || keys.ShiftRight || held.boost));
+      (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0), !!(keys.ShiftLeft || keys.ShiftRight || held.boost));
   };
   const toBuf = e => { const r = cv.getBoundingClientRect(); game.pointerMove(((e.clientX - r.left) / r.width) * game.width, ((e.clientY - r.top) / r.height) * game.height); };
-  const useTouch = () => { if (touch) return; touch = true; tier = Math.max(tier, minTier()); pad.hidden = false; bot.hidden = true; fit(); joyHome(); };
+  const useTouch = () => { if (touch) return; touch = true; game.setTouch(true); tier = Math.max(tier, minTier()); pad.hidden = false; bot.hidden = true; fit(); joyHome(); note(MODE[game.view]); };
   // on a phone the first touch goes full screen and holds landscape (where the browser allows it; iPhones do not)
   let wentFull = false;
   const goFull = () => {
@@ -62,6 +61,11 @@ setTimeout(() => {
   addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { useTouch(); goFull(); } }, true);
 
   const MSL_MSG = { empty: '미사일 없음 — 5초마다 1발 충전', lock: '미사일 발사 — 락온', seek: '미사일 발사 — 추적', dumb: '미사일 발사' };
+  // on touch each view flies differently (and the guns fire by themselves): say which when the view changes
+  const MODE = ['위에서 보기 — 조이스틱 방향으로 비행 · 사격 자동', '뒤에서 따라가기 — 좌우 선회 · 위로 밀면 상승 · 사격 자동', '조종석 — 실제 비행기처럼: 좌우 롤, 당기면 기수 상승 · 사격 자동'];
+  const sound = createAudio(game);
+  addEventListener('pointerdown', () => sound.unlock(), true);
+  addEventListener('keydown', () => sound.unlock(), true);
   const launch = () => { const r = game.fireMissile(); if (MSL_MSG[r]) note(MSL_MSG[r]); };
 
   // mouse: move steers, left button fires, right button launches
@@ -107,7 +111,7 @@ setTimeout(() => {
   addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in held) held[k] = false; mouseGun = false; sync(); joyOff(); });
 
   // touch buttons: some are held (gun, thrust, climb, dive), some are taps
-  const tap = { msl: launch, roll: () => game.startRoll(0), view: () => game.toggleView(), calm: () => note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔')) };
+  const tap = { roll: () => game.startRoll(0), view: () => { game.toggleView(); note(MODE[game.view]); }, sound: () => note('소리: ' + (sound.toggle() ? '켬' : '끔')), calm: () => note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔')) };
   for (const b of pad.querySelectorAll('button')) {
     const k = b.dataset.k;
     const set = (e, on) => {
@@ -133,6 +137,7 @@ setTimeout(() => {
     if (e.code === 'KeyE') game.startRoll(1);
     if (e.code === 'KeyF') launch();
     if (e.code === 'KeyT') game.cycleTime();
+    if (e.code === 'KeyM') note('소리: ' + (sound.toggle() ? '켬' : '끔'));
     if (e.code === 'KeyC') note('화면 안정: ' + (game.toggleCalm() ? '켬' : '끔'));
     if (e.code === 'KeyB') note('움직임 보정: ' + ['끔', '약', '강'][game.cycleSmooth()]);
     if (e.code === 'KeyR') { tier = tier >= 3 ? minTier() : tier + 1; manual = true; fit(); note(`해상도 ${TIER_NAME[tier]} (${game.width}×${game.height})`); }
@@ -148,6 +153,7 @@ setTimeout(() => {
     last = now;
     const t0 = performance.now();
     game.step(dt);
+    sound.update();
     image.data.set(game.render());
     ctx.putImageData(image, 0, 0);
     cost += performance.now() - t0; acc += dt; frames++;
@@ -164,7 +170,6 @@ setTimeout(() => {
       fpsEl.textContent = debug ? `${game.fps} fps · ${game.ms.toFixed(1)} ms · ${TIER_NAME[tier]} ${game.width}x${game.height}` : '';
       if ((noteT -= acc) <= 0 && !(touch && innerHeight > innerWidth)) msg.textContent = game.cb.dead ? '격추당했습니다 — 재출격 중…' : '';
       bot.className = game.view === 2 ? 'top' : '';
-      mslBtn.textContent = '미사일 ' + game.cb.msl;
       acc = 0; frames = 0; cost = 0;
     }
     requestAnimationFrame(frame);

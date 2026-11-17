@@ -3,3 +3,4 @@ parts/tmp/
 node_modules/
 .DS_Store
 Thumbs.db
+sfx_preview/

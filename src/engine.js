@@ -409,6 +409,14 @@ function createGame() {
   let pivotY = 0, cockpit = null, colLo = 0, colHi = 0, rowLo = 0, rowHi = 0, frameH = 0;
   let time = 0, holding = false, pointerOn = false, pointerX = 0, pointerY = 0, boostKey = false, keyTurn = 0, keyClimb = 0, keyMode = false;
   const stick = { on: false, x: 0, y: 0 };
+  // Touch play gives each view its own way of flying, and fires by itself:
+  //   overhead — the stick points where to go, height stays put
+  //   behind   — casual: left/right turns, up climbs
+  //   cockpit  — like a real aircraft: left/right rolls (the bank stays where you leave it, and the bank is what
+  //              turns you), pulling back raises the nose (and tightens the turn while banked)
+  let touchMode = false;
+  const events = [];   // what the sound needs to hear about: [type, x, y, z, size]
+  const emit = (type, x, y, z, size = 1) => { if (events.length < 120) events.push([type, x, y, z, size]); };
   let altGoal = P.altitude, climbV = 0, climbTilt = 0, floorS = 0, speedNow = P.speed, boost = 0;
   const cam = { x: 0, y: 0, yaw: 0, alt: P.altitude }, follow = { x: 0, y: 0, alt: P.altitude };
   let viewTarget = 0;
@@ -539,6 +547,7 @@ function createGame() {
     sparks.push({ x, y, z, vx, vy, vz, life, born: time, col, g });
   }
   function explode(x, y, z, big) {
+    emit(big ? 'boom' : 'pop', x, y, z);
     puffK = 0.6;
     const rnd = Math.random;
     if (big) {
@@ -559,6 +568,7 @@ function createGame() {
     puffK = 1;
   }
   function splash(x, y, big) {
+    if (big) emit('splash', x, y, 0);
     for (let i = 0; i < (big ? 40 : 3); i++) {
       const a = Math.random() * 6.283, sp = Math.random() * (big ? 46 : 16);
       spark(x, y, 0.5, Math.cos(a) * sp, Math.sin(a) * sp, 16 + Math.random() * (big ? 80 : 26), 0.4 + Math.random() * 0.6, i & 1 ? whitePal[0] : whitePal[2], 110);
@@ -598,11 +608,26 @@ function createGame() {
     missiles.push({ x: tmp3[0], y: tmp3[1], z: tmp3[2], yaw: lead.yaw, spd: speedNow + 60, tgt, life: tgt ? 5 : 3, smokeT: 0 });
     // a puff of launch smoke where it leaves the rail
     puff(1, tmp3[0], tmp3[1], tmp3[2], lead.vx * 0.3, lead.vy * 0.3, 2, 1.6, 3, 0.6, 0.9);
+    emit('missile', tmp3[0], tmp3[1], tmp3[2]);
     return how;
+  }
+  // touch play shoots by itself, and only when there is something to hit
+  function autoGun() {
+    const t = cb.lock;
+    if (!touchMode || !t || t.dying) return false;
+    const dx = t.x - lead.x, dy = t.y - lead.y, d = Math.hypot(dx, dy);
+    const c = (dx * Math.sin(lead.yaw) - dy * Math.cos(lead.yaw)) / (d || 1);
+    return d < 420 && c > 0.975 && Math.abs(t.z - lead.z) < 40;
+  }
+  function autoMissile() {
+    const t = cb.lock;
+    if (!touchMode || cb.dead || !t || t.dying || cb.lockT < LOCK_TIME + 0.3 || cb.msl <= 0 || time - mslAt < 2.5) return;
+    if (Math.hypot(t.x - lead.x, t.y - lead.y) < 140 || missiles.some(m => m.tgt === t)) return;   // close in, the guns will do
+    fireMissile();
   }
   function hurtPlayer(n) {
     if (cb.dead || cb.inv > 0) return;
-    cb.hp -= n; cb.hit = 1; cb.shake = Math.max(cb.shake, 0.35);
+    cb.hp -= n; cb.hit = 1; emit('hurt', lead.x, lead.y, lead.z); cb.shake = Math.max(cb.shake, 0.35);
     if (cb.hp <= 0) { cb.hp = 0; cb.dead = 3; explode(lead.x, lead.y, lead.z, true); explode(lead.x + 6, lead.y - 4, lead.z + 3, true); }
   }
   function killEnemy(e) {
@@ -617,11 +642,12 @@ function createGame() {
     const lax = axes(lead);
     cb.firing = false;
     if (cb.dead) {
-      if ((cb.dead -= dt) <= 0) { cb.dead = 0; cb.hp = 100; cb.inv = 3; lead.intro = 0; lead.burn = 0; lead.trailLen = 0; }
-    } else if (holding && lead.intro > 2) {
+      if ((cb.dead -= dt) <= 0) { cb.dead = 0; cb.hp = 100; cb.inv = 3; lead.intro = 0; lead.burn = 0; lead.trailLen = 0; lead.roll = 0; lead.pitch = 0; }
+    } else if ((holding || autoGun()) && lead.intro > 2) {
       cb.firing = true;
       if ((cb.gunT -= dt) <= 0) {   // twin guns in the wing roots; rounds lean towards the locked target's height
         cb.gunT = 0.066; cb.gunSide = -cb.gunSide;
+        emit('gun', lead.x, lead.y, lead.z);
         modelPoint(lead, lax, cb.gunSide * 6, lead.model.pivK - 26, lead.model.pivY + 1, tmp3);
         let vz = lax.fz * BUL_SPD;
         const t = cb.lock;
@@ -631,6 +657,7 @@ function createGame() {
       }
     }
     for (let i = respawns.length - 1; i >= 0; i--) if ((respawns[i] -= dt) <= 0) { respawns.splice(i, 1); spawnEnemy(); }
+    autoMissile();
     // lock-on: the nearest enemy inside the nose cone
     let best = null, bd = 1e9;
     const pfx = Math.sin(lead.yaw), pfy = -Math.cos(lead.yaw);
@@ -682,6 +709,7 @@ function createGame() {
       }
       if (e.burst > 0 && (e.bT -= dt) < 0) {
         e.burst--; e.bT = 0.09;
+        emit('egun', e.x, e.y, e.z);
         const s = BUL_SPD * 0.68;
         bullets.push({ x: e.x + fx * 30 * JS, y: e.y + fy * 30 * JS, z: e.z, vx: fx * s + e.vx, vy: fy * s + e.vy, vz: (lead.z - e.z) / Math.max(0.1, dist / s), life: BUL_LIFE, own: false });
       }
@@ -795,22 +823,44 @@ function createGame() {
         }
       }
     }
-    lead.yawRate += (want - lead.yawRate) * ease(dt, 2.6);
-    lead.yaw += lead.yawRate * dt;
-    lead.roll += (clamp(lead.yawRate / maxRate, -1, 1) * (P.bank * Math.PI) / 180 - lead.roll) * ease(dt, 5);
-    lead.vx = Math.sin(lead.yaw) * speed; lead.vy = -Math.cos(lead.yaw) * speed;
-    lead.x += lead.vx * dt; lead.y += lead.vy * dt;
-    if (introDone) altGoal += climb * climbMax * dt;
-    altGoal = clamp(altGoal, altLo, altHi);
-    let dz = (altGoal - lead.z) * ease(dt, 3);
-    dz = clamp(dz, -climbMax * dt, climbMax * dt);
-    lead.z += dz;
+    const sim = touchMode && viewTarget === 2 && introDone;
+    if (sim) {
+      // the stick moves the control surfaces, not the course: roll rate and pitch rate
+      const sx = stick.on ? stick.x : 0, pull = stick.on ? -stick.y : 0;
+      lead.roll = clamp(lead.roll + sx * 1.9 * dt, -1.4, 1.4);
+      const q = pull * 0.85;                                   // pitch rate about the wings
+      lead.pitch = clamp(lead.pitch + q * Math.cos(lead.roll) * dt, -0.62, 0.62);
+      lead.yawRate = clamp(0.8 * Math.tan(lead.roll) + q * Math.sin(lead.roll) * 0.9, -1.9, 1.9);
+      lead.yaw += lead.yawRate * dt;
+      const cp = Math.cos(lead.pitch);
+      lead.vx = Math.sin(lead.yaw) * speed * cp; lead.vy = -Math.cos(lead.yaw) * speed * cp;
+      lead.x += lead.vx * dt; lead.y += lead.vy * dt;
+      const dz = speed * Math.sin(lead.pitch) * dt;
+      lead.z += dz;
+      // the ground and the ceiling still win: the nose is eased up (or down) rather than flying through them
+      if (lead.z < altLo) { lead.z += (altLo - lead.z) * ease(dt, 8); lead.pitch = Math.max(lead.pitch, lead.pitch + (0.18 - lead.pitch) * ease(dt, 3)); }
+      if (lead.z > altHi) { lead.z = altHi; lead.pitch = Math.min(lead.pitch, 0); }
+      altGoal = lead.z;
+      climbV += (dz / Math.max(dt, 1e-4) - climbV) * ease(dt, 6);
+      climbTilt = clamp(lead.pitch, -0.5, 0.5);
+    } else {
+      lead.yawRate += (want - lead.yawRate) * ease(dt, 2.6);
+      lead.yaw += lead.yawRate * dt;
+      lead.roll += (clamp(lead.yawRate / maxRate, -1, 1) * (P.bank * Math.PI) / 180 - lead.roll) * ease(dt, 5);
+      lead.vx = Math.sin(lead.yaw) * speed; lead.vy = -Math.cos(lead.yaw) * speed;
+      lead.x += lead.vx * dt; lead.y += lead.vy * dt;
+      if (introDone && !(touchMode && viewTarget === 0)) altGoal += climb * climbMax * dt;   // (overhead on touch: height stays put)
+      altGoal = clamp(altGoal, altLo, altHi);
+      let dz = (altGoal - lead.z) * ease(dt, 3);
+      dz = clamp(dz, -climbMax * dt, climbMax * dt);
+      lead.z += dz;
+      climbV += (dz / Math.max(dt, 1e-4) - climbV) * ease(dt, 6);
+      const climbing = Math.sign(climbV) * Math.max(0, Math.abs(climbV) - 3);
+      climbTilt = clamp((climbing / Math.max(20, speed)) * 1.25, -0.5, 0.5);
+      lead.pitch += (Math.abs(lead.yawRate / maxRate) * 0.1 + climbTilt - lead.pitch) * ease(dt, 4);
+    }
     const hard = groundAt(lead.x, lead.y) + clearance * 0.7;
     if (lead.z < hard) lead.z += (hard - lead.z) * ease(dt, 22);
-    climbV += (dz / Math.max(dt, 1e-4) - climbV) * ease(dt, 6);
-    const climbing = Math.sign(climbV) * Math.max(0, Math.abs(climbV) - 3);
-    climbTilt = clamp((climbing / Math.max(20, speed)) * 1.25, -0.5, 0.5);
-    lead.pitch += (Math.abs(lead.yawRate / maxRate) * 0.1 + climbTilt - lead.pitch) * ease(dt, 4);
     // the pilot's head leans into a turn and sinks under thrust, on a soft spring
     const hxGoal = calm ? 0 : clamp(lead.yawRate / maxRate, -1, 1) * 6.4 + Math.sin(time * 0.53) * 0.3;
     const hyGoal = calm ? 0 : clamp(climbTilt / 0.5, -1, 1) * 3.4 + boost * 1.6 + Math.sin(time * 0.71 + 1) * 0.25;
@@ -1665,6 +1715,10 @@ function createGame() {
     pointerLeave() { pointerOn = false; },
     setHolding(v) { holding = v; },
     // x right, y up, both −1..1; a small dead zone in the middle
+    setTouch(on) { touchMode = on; },
+    get touchMode() { return touchMode; },
+    get events() { return events; },
+    get boost() { return boost; },
     setStick(on, x, y) { const m = Math.hypot(x, y), k = m < 0.12 ? 0 : (m - 0.12) / 0.88 / (m || 1); stick.on = on; stick.x = clamp(x * k, -1, 1); stick.y = clamp(y * k, -1, 1); },
     setKeys(turn, climb, b) { keyTurn = turn; keyClimb = climb; boostKey = b; if (turn !== 0) keyMode = true; },
     nudgeAlt(d) { altGoal = clamp(altGoal + d, floorS, P.ceiling); },

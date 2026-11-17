@@ -43,17 +43,18 @@
   <canvas id="c"></canvas>
   <div id="msg">불러오는 중…</div>
   <div id="fps"></div>
-  <div id="bot">마우스: 선회(뒤·조종석 시점은 위아래로 상승·하강) · 좌클릭/Space: 발칸 · 우클릭/F: 미사일 · Shift: 가속 · Q/E: 롤 · W/S·휠: 고도 · 1/2/3: 시점 · T: 시간대 · B: 움직임 보정 · C: 화면 안정 · R: 해상도</div>
+  <div id="bot">마우스: 선회(뒤·조종석 시점은 위아래로 상승·하강) · 좌클릭/Space: 발칸 · 우클릭/F: 미사일 · Shift: 가속 · Q/E: 롤 · W/S·휠: 고도 · 1/2/3: 시점 · T: 시간대 · M: 소리 · B: 움직임 보정 · C: 화면 안정 · R: 해상도</div>
   <div id="pad" hidden>
     <div id="joy"><div id="knob"></div></div>
-    <div class="top"><button data-k="view">시점</button><button data-k="calm">안정</button></div>
-    <div class="grp r"><div class="col"><button data-k="up">▲</button><button data-k="down">▼</button></div><div class="col"><button data-k="roll">롤</button><button data-k="boost">가속</button></div><button data-k="msl" class="msl">미사일 4</button><button data-k="gun" class="big">발칸</button></div>
+    <div class="top"><button data-k="view">시점</button><button data-k="calm">안정</button><button data-k="sound">소리</button></div>
+    <div class="grp r"><button data-k="roll">롤</button><button data-k="boost" class="big">가속</button></div>
   </div>
 </div>
 <script>
 /*@include parts/jets.js*/
 /*@include parts/cockpit.js*/
 /*@include src/engine.js*/
+/*@include src/audio.js*/
 /*@include src/main.js*/
 </script>
 </body>
